@@ -11,9 +11,10 @@ from . import auth as syn
 
 class FileStation:
 
-    def __init__(self, ip_address, port, username, password, secure=False):
+    def __init__(self, ip_address, port, username, password, secure=False, raise_exceptions=True):
 
-        self.session = syn.Authentication(ip_address, port, username, password, secure)
+        self.session = syn.Authentication(ip_address, port, username, password, secure,
+                                          raise_exceptions=raise_exceptions)
 
         self._dir_taskid = ''
         self._dir_taskid_list = []
@@ -37,8 +38,6 @@ class FileStation:
         self.file_station_list = self.session.app_api_list
         self._sid = self.session.sid
         self.base_url = self.session.base_url
-
-        print('You are now logged in!')
 
     def logout(self):
         self.session.logout('FileStation')
@@ -991,7 +990,7 @@ class FileStation:
         session = requests.session()
 
         url = ('%s%s' % (self.base_url, api_path)) + '?api=%s&version=%s&method=download&path=%s&mode=%s&_sid=%s' % (
-                api_name, info['maxVersion'], parse.quote_plus(path), mode, self._sid)
+            api_name, info['maxVersion'], parse.quote_plus(path), mode, self._sid)
 
         if mode is None:
             return 'Enter a valid mode (open / download)'

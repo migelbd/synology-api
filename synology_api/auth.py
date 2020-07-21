@@ -1,8 +1,34 @@
 import requests
+import logging
+
+from synology_api.exceptions import SynologyApiError
+
+logger = logging.getLogger(__name__)
+
+def raise_exception(code, response_data):
+    from synology_api import exceptions
+    exceptions_map = {
+        100: exceptions.UnknownError,
+        101: exceptions.InvalidParameter,
+        102: exceptions.InvalidRequestAPI,
+        103: exceptions.MethodNotExists,
+        104: exceptions.NotSupportVersion,
+        105: exceptions.ForbiddenRequest,
+        106: exceptions.SessionTimeout,
+        107: exceptions.SessionInterrupted,
+        400: exceptions.NoSuchAccountOrIncorrectPassword,
+        401: exceptions.AccountDisabled,
+        402: exceptions.PermissionDenied,
+        403: exceptions.VerificationCode2StepRequired,
+        404: exceptions.FailedAuthenticate2StepVerificationCode,
+
+    }
+    exc = exceptions_map.get(code, exceptions.UnknownError)
+    raise exc(response_data=response_data)
 
 
 class Authentication:
-    def __init__(self, ip_address, port, username, password, secure=False):
+    def __init__(self, ip_address, port, username, password, secure=False, **kwargs):
         self._ip_address = ip_address
         self._port = port
         self._username = username
@@ -11,9 +37,15 @@ class Authentication:
         self._session_expire = True
         schema = 'https' if secure else 'http'
         self._base_url = '%s://%s:%s/webapi/' % (schema, self._ip_address, self._port)
-
+        self.is_raise_exception = kwargs.get('raise_exceptions', True)
         self.full_api_list = {}
         self.app_api_list = {}
+
+    def get_data_or_error(self, response) -> dict:
+        response_data = response.json()
+        if self.is_raise_exception and 'error' in response_data:
+            raise_exception(response_data['error']['code'], response_data)
+        return response_data
 
     def login(self, application):
         login_api = 'auth.cgi?api=SYNO.API.Auth'
@@ -26,8 +58,11 @@ class Authentication:
                 return 'User already logged'
         else:
             session_request = requests.get(self._base_url + login_api, param)
-            self._sid = session_request.json()['data']['sid']
+            response_data: dict = self.get_data_or_error(session_request)
+
+            self._sid = response_data['data']['sid']
             self._session_expire = False
+            logger.info('User logging... New session started!')
             return 'User logging... New session started!'
 
     def logout(self, application):
@@ -89,7 +124,7 @@ class Authentication:
     def request_data(self, api_name, api_path, req_param, method=None, response_json=True):  # 'post' or 'get'
 
         # Convert all booleen in string in lowercase because Synology API is waiting for "true" or "false"
-        for k,v in req_param.items():
+        for k, v in req_param.items():
             if isinstance(v, bool):
                 req_param[k] = str(v).lower()
 
@@ -97,24 +132,21 @@ class Authentication:
             method = 'get'
 
         req_param['_sid'] = self._sid
-
-        if method is 'get':
+        response = None
+        if method == 'get':
             url = ('%s%s' % (self._base_url, api_path)) + '?api=' + api_name
             response = requests.get(url, req_param)
-
-            if response_json is True:
-                return response.json()
-            else:
-                return response
-
-        elif method is 'post':
+        elif method == 'post':
             url = ('%s%s' % (self._base_url, api_path)) + '?api=' + api_name
             response = requests.post(url, req_param)
 
-            if response_json is True:
-                return response.json()
-            else:
-                return response
+        if response and response.status_code != 200:
+            raise SynologyApiError(response.text)
+
+        if response_json is True:
+            return self.get_data_or_error(response)
+        else:
+            return response
 
     @property
     def sid(self):
